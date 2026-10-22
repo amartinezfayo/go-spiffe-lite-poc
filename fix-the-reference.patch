@@ -1,0 +1,136 @@
+From 770fd33478337a7939777ed10cc96d205f6fc0bc Mon Sep 17 00:00:00 2001
+From: PoC Maintainer <poc@example.org>
+Date: Wed, 21 Oct 2026 16:07:38 -0500
+Subject: [PATCH] Pin lite require to v0.1.0 and drop the replace directive
+
+---
+ .github/workflows/pr_build.yaml |  9 +++++++--
+ Makefile                        | 13 +++++++++++++
+ go.mod                          |  4 +---
+ go.sum                          |  2 ++
+ go.work                         | 24 +++++++++++++-----------
+ 5 files changed, 36 insertions(+), 16 deletions(-)
+
+diff --git a/.github/workflows/pr_build.yaml b/.github/workflows/pr_build.yaml
+index 315692b..d3ef750 100644
+--- a/.github/workflows/pr_build.yaml
++++ b/.github/workflows/pr_build.yaml
+@@ -51,8 +51,13 @@ jobs:
+       # anything beyond go-jose.
+       - name: Check lite module dependencies
+         run: make lite-deps-check
+-      # go.work makes local builds resolve the lite module from disk. Confirm
+-      # the v2 module also builds the way a consumer resolves it.
++      # A merged replace directive would make the v2 module unresolvable for
++      # consumers pinning it at a branch or commit.
++      - name: Check for replace directives
++        run: make replace-check
++      # go.work makes in-repo builds resolve the lite module from disk. With no
++      # replace in go.mod, building outside the workspace resolves lite from its
++      # released tag, the way a consumer does.
+       - name: Build outside the workspace
+         run: GOWORK=off go build ./...
+ 
+diff --git a/Makefile b/Makefile
+index 364eaf9..580fada 100644
+--- a/Makefile
++++ b/Makefile
+@@ -15,6 +15,7 @@ help:
+ 	@echo "  sync             - copy shared test support code from lite/ into the v2 module"
+ 	@echo "  sync-check       - ensure the copied test support code is up to date"
+ 	@echo "  lite-deps-check  - ensure the lite module stays free of heavyweight dependencies"
++	@echo "  replace-check    - ensure go.mod files carry no replace directives"
+ 
+ # This repository contains two Go modules: the full github.com/spiffe/go-spiffe/v2
+ # module rooted here, and the lightweight github.com/spiffe/go-spiffe/lite module
+@@ -263,6 +264,18 @@ lite-deps-check: | go-check
+ 		fi
+ 	@echo "Lite module dependencies are OK."
+ 
++# Consumers ignore replace directives in a dependency's go.mod, so a merged
++# replace would make the module unresolvable for anyone pinning it at a
++# branch or commit. The lite require must always point at a released tag.
++.PHONY: replace-check
++replace-check:
++	@echo "Checking that go.mod files carry no replace directives..."
++	@if grep -nE '^replace' go.mod lite/go.mod; then \
++		echo "replace directives must not be merged; pin a released tag instead."; \
++		exit 1; \
++	fi
++	@echo "No replace directives found."
++
+ .PHONY: git-clean-check
+ git-clean-check:
+ ifneq ($(git_dirty),)
+diff --git a/go.mod b/go.mod
+index b3a4679..c3bc8b0 100644
+--- a/go.mod
++++ b/go.mod
+@@ -5,7 +5,7 @@ go 1.24.0
+ require (
+ 	github.com/Microsoft/go-winio v0.6.2
+ 	github.com/go-jose/go-jose/v4 v4.1.4
+-	github.com/spiffe/go-spiffe/lite v0.0.0
++	github.com/spiffe/go-spiffe/lite v0.1.0
+ 	github.com/stretchr/testify v1.11.1
+ 	google.golang.org/grpc v1.79.3
+ 	google.golang.org/grpc/examples v0.0.0-20250407062114-b368379ef8f6
+@@ -23,5 +23,3 @@ require (
+ 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
+ 	gopkg.in/yaml.v3 v3.0.1 // indirect
+ )
+-
+-replace github.com/spiffe/go-spiffe/lite => ./lite
+diff --git a/go.sum b/go.sum
+index 959b24e..320e124 100644
+--- a/go.sum
++++ b/go.sum
+@@ -23,6 +23,8 @@ github.com/kr/text v0.1.0 h1:45sCR5RtlFHMR4UwH9sdQ5TC8v0qDQCHnXt+kaKSTVE=
+ github.com/kr/text v0.1.0/go.mod h1:4Jbv+DJW3UT/LiOwJeYQe1efqtUx/iVham/4vfdArNI=
+ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
+ github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
++github.com/spiffe/go-spiffe/lite v0.1.0 h1:+9oWccQEn8ltuF2Xnd62Nw5mrrx9qrhUFMWuyTuWaw0=
++github.com/spiffe/go-spiffe/lite v0.1.0/go.mod h1:skSVdbfAa6CYtDEiiMJHbSBMR/uIXJgko2O2CySYy7g=
+ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
+ github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+ go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
+diff --git a/go.work b/go.work
+index 4685372..e9513ec 100644
+--- a/go.work
++++ b/go.work
+@@ -1,19 +1,21 @@
+ // This repository contains two Go modules: github.com/spiffe/go-spiffe/v2 at the
+ // root and the lightweight github.com/spiffe/go-spiffe/lite under lite/. The
+-// workspace makes local builds and tests resolve lite from disk.
++// workspace makes in-repo builds and tests resolve lite from disk, so changes
++// that span both modules can be developed and tested together.
+ //
+-// Releasing is therefore two steps, lite first:
++// The root go.mod always requires a released lite tag and carries no `replace`
++// directive (replace-check enforces this). Consumers ignore `replace` in a
++// dependency's go.mod, so this keeps every tip of main resolvable for anyone
++// pinning the v2 module at a branch or commit, and it makes the GOWORK=off CI
++// build verify the resolution consumers actually see.
+ //
+-//  1. Tag the lite module:  lite/vX.Y.Z
+-//  2. In the root go.mod, drop the `replace` directive and set the lite
+-//     `require` to the version just tagged.
+-//  3. Run `GOWORK=off go mod tidy` and confirm `GOWORK=off go build ./...`
+-//     succeeds, which is how consumers resolve the dependency.
+-//  4. Tag the v2 module:  vX.Y.Z
++// Releasing is two steps, lite first:
+ //
+-// The `replace` directive exists so the repository builds before lite has ever
+-// been tagged. Consumers ignore `replace` directives in dependency go.mod files,
+-// so the `require` line must point at a real tag by release time.
++//  1. Tag the lite module:  lite/vX.Y.Z
++//  2. If the release includes lite changes the v2 module needs, bump the lite
++//     `require` in the root go.mod to the new tag and run
++//     `GOWORK=off go mod tidy`.
++//  3. Tag the v2 module:  vX.Y.Z
+ 
+ go 1.24.0
+ 
+-- 
+2.54.0 (Apple Git-157)
+
